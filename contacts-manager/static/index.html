@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rehber Yöneticisi</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1c1e21;--mu:#6b7280;--bd:#e3e5e8;--ac:#2563eb;--dn:#dc2626}
+@media(prefers-color-scheme:dark){:root{--bg:#15171a;--card:#1f2226;--tx:#e8eaed;--mu:#9aa0a6;--bd:#33373d;--ac:#6ea0ff;--dn:#ff6b6b}}
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--tx);display:flex;height:100vh}
+aside{width:230px;border-right:1px solid var(--bd);padding:12px;overflow:auto;background:var(--card);flex:none}
+aside h3{font-size:12px;color:var(--mu);margin:14px 4px 6px;text-transform:uppercase}
+.nav{padding:7px 10px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between}
+.nav:hover{background:var(--bg)}.nav.on{background:var(--ac);color:#fff}
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+.bar{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--card);align-items:center;flex-wrap:wrap}
+input,select,textarea{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:7px 9px;font:inherit}
+button{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--ac)}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}button.d{color:var(--dn);border-color:var(--dn)}
+#search{flex:1;min-width:160px}
+.list{flex:1;overflow:auto}
+.row{display:grid;grid-template-columns:30px 40px 1.4fr 1.2fr 1.4fr 1fr;gap:10px;align-items:center;padding:7px 14px;border-bottom:1px solid var(--bd);cursor:pointer}
+.row:hover{background:var(--card)}.row.sel{background:color-mix(in srgb,var(--ac) 14%,transparent)}
+.av{width:36px;height:36px;border-radius:50%;background:var(--bd);display:flex;align-items:center;justify-content:center;color:var(--mu);font-weight:600;overflow:hidden}
+.av img{width:100%;height:100%;object-fit:cover}
+.mu{color:var(--mu)}.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.modal{position:fixed;inset:0;background:#0007;display:flex;align-items:center;justify-content:center;padding:14px}
+.box{background:var(--card);border-radius:14px;padding:18px;width:520px;max-width:100%;max-height:92vh;overflow:auto}
+.box label{display:block;font-size:12px;color:var(--mu);margin:10px 0 3px}.box input,.box textarea{width:100%}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}.ml{display:flex;gap:6px;margin-bottom:6px}.ml select{width:110px}.ml input{flex:1}
+.big{width:84px;height:84px;font-size:28px}
+.cl{background:var(--card);border:1px solid var(--bd);border-radius:12px;margin:12px 14px;padding:6px 12px}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:9px 16px;border-radius:10px}
+@media(max-width:800px){aside{display:none}.row{grid-template-columns:30px 40px 1fr 1fr}.row>:nth-child(n+5){display:none}}
+</style></head><body>
+<aside id="side"></aside>
+<main>
+  <div class="bar">
+    <input id="search" placeholder="Ara: isim, telefon, e-posta, şirket…">
+    <select id="filter"><option value="">Tüm kayıtlar</option><option value="noname">İsimsiz</option><option value="nophone">Telefonu yok</option><option value="empty">Telefon ve e-postası yok</option><option value="nophoto">Fotoğrafı yok</option></select>
+    <button id="add" class="p">+ Yeni</button><button id="reload">↻ Yenile</button>
+  </div>
+  <div class="bar" id="bulk" hidden></div>
+  <div class="list" id="list"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+function h(tag,attrs={},...kids){const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k.startsWith('on'))e.addEventListener(k.slice(2),v);else if(k==='class')e.className=v;else if(v!==false&&v!=null)e[k]=v}
+  for(const c of kids.flat())if(c!=null)e.append(c.nodeType?c:document.createTextNode(c));return e}
+async function api(path,body){const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+  const t=await r.text();let j;try{j=JSON.parse(t)}catch{j=null}if(!r.ok)throw new Error((j&&j.error)||('HTTP '+r.status));return j}
+function toast(m){const t=h('div',{class:'toast'},m);document.body.append(t);setTimeout(()=>t.remove(),2800)}
+let S={contacts:[],groups:[],view:'all',sel:new Set(),dups:null};
+async function load(){const d=await api('/api/contacts');S.contacts=d.contacts;S.groups=d.groups;S.sel=new Set([...S.sel].filter(i=>S.contacts.some(c=>c.id===i)));render()}
+function nav(label,view,count){return h('div',{class:'nav'+(S.view===view?' on':''),onclick:async()=>{S.view=view;S.sel.clear();if(view==='dups')S.dups=await api('/api/duplicates');render()}},h('span',{},label),h('span',{class:'mu'},count??''))}
+function visible(){const q=$('#search').value.trim().toLowerCase(),f=$('#filter').value;
+  return S.contacts.filter(c=>{
+    if(S.view.startsWith('g:')&&!c.groups.includes(S.view.slice(2)))return false;
+    if(f==='noname'&&c.name)return false;if(f==='nophone'&&c.phones.length)return false;
+    if(f==='empty'&&(c.phones.length||c.emails.length))return false;if(f==='nophoto'&&c.hasPhoto)return false;
+    return !q||[c.name,c.org,...c.phones,...c.emails].join(' ').toLowerCase().includes(q)})}
+function avatar(c,cls=''){const a=h('div',{class:'av '+cls});if(c.hasPhoto)a.append(h('img',{src:'/api/photo?id='+c.id,loading:'lazy'}));else a.textContent=(c.name||'?').trim()[0]?.toUpperCase()||'?';return a}
+function render(){
+  const side=$('#side');side.replaceChildren(h('h3',{},'Rehber'),nav('Tüm kişiler','all',S.contacts.length),nav('Tekrar edenler','dups'),h('h3',{},'Gruplar'),
+    ...S.groups.map(g=>h('div',{class:'nav'+(S.view==='g:'+g.id?' on':''),onclick:()=>{S.view='g:'+g.id;S.sel.clear();render()}},h('span',{class:'ell'},g.name),h('span',{class:'mu'},g.count))),
+    h('div',{class:'nav',onclick:newGroup},'+ Yeni grup'));
+  const list=$('#list');
+  if(S.view==='dups'){renderDups(list);renderBulk();return}
+  const v=visible();
+  list.replaceChildren(...v.map(c=>h('div',{class:'row'+(S.sel.has(c.id)?' sel':''),onclick:e=>{if(e.target.type==='checkbox')return;edit(c.id)}},
+    h('input',{type:'checkbox',checked:S.sel.has(c.id),onchange:e=>{e.target.checked?S.sel.add(c.id):S.sel.delete(c.id);renderBulk();e.target.closest('.row').classList.toggle('sel',e.target.checked)}}),
+    avatar(c),h('div',{class:'ell'},c.name||h('span',{class:'mu'},'(isimsiz)')),h('div',{class:'ell mu'},c.phones.join(', ')),h('div',{class:'ell mu'},c.emails.join(', ')),h('div',{class:'ell mu'},c.org))));
+  if(!v.length)list.replaceChildren(h('p',{class:'mu',style:'padding:20px'},'Kayıt yok.'));
+  renderBulk(v)}
+function renderBulk(v){const b=$('#bulk'),n=S.sel.size;b.hidden=!n&&!(v&&v.length&&S.view!=='dups');if(b.hidden)return;
+  const vis=v||visible();
+  b.replaceChildren(h('button',{onclick:()=>{const all=vis.every(c=>S.sel.has(c.id));vis.forEach(c=>all?S.sel.delete(c.id):S.sel.add(c.id));render()}},'Görünenleri seç/bırak ('+vis.length+')'),
+    h('b',{},n+' seçili'),
+    n?h('button',{class:'d',onclick:delSel},'Sil'):null,
+    n?h('select',{onchange:async e=>{const g=e.target.value;if(!g)return;await api('/api/group/members',{gid:g,add:[...S.sel]});toast('Gruba eklendi');await load()}},h('option',{value:''},'Gruba ekle…'),...S.groups.map(g=>h('option',{value:g.id},g.name))):null,
+    n&&S.view.startsWith('g:')?h('button',{onclick:async()=>{await api('/api/group/members',{gid:S.view.slice(2),remove:[...S.sel]});S.sel.clear();await load()}},'Gruptan çıkar'):null)}
+async function delSel(){const n=S.sel.size;if(!confirm(n+' kayıt iCloud\'dan silinecek (telefondan da silinir). Yedek backups/ klasöründe. Devam?'))return;
+  try{await api('/api/delete',{ids:[...S.sel],confirm:true});S.sel.clear();toast(n+' kayıt silindi');await load()}catch(e){toast('Hata: '+e.message)}}
+async function newGroup(){const n=prompt('Grup adı:');if(!n)return;try{await api('/api/group/create',{name:n});await load()}catch(e){toast('Hata: '+e.message)}}
+function renderDups(list){const d=S.dups||[];if(!d.length){list.replaceChildren(h('p',{class:'mu',style:'padding:20px'},'Tekrar eden kayıt bulunamadı.'));return}
+  list.replaceChildren(h('p',{class:'mu',style:'padding:10px 14px'},'Aynı telefon numarasına veya aynı isme sahip kayıtlar. "Birleştir": seçtiğiniz kayıt kalır, diğerlerinin telefon/e-posta/not bilgileri ona eklenir, diğerleri silinir.'),
+   ...d.map(cl=>{let keep=cl[0].id;const box=h('div',{class:'cl'});
+    const draw=()=>box.replaceChildren(...cl.map(c=>h('div',{class:'row',style:'grid-template-columns:30px 40px 1.4fr 1.4fr 1.4fr;cursor:default'},
+      h('input',{type:'radio',name:'k'+cl[0].id,checked:keep===c.id,onchange:()=>keep=c.id}),avatar(c),h('div',{class:'ell'},c.name||'(isimsiz)'),h('div',{class:'ell mu'},c.phones.join(', ')),h('div',{class:'ell mu'},c.emails.join(', ')))),
+      h('div',{style:'padding:8px 0;display:flex;gap:8px'},h('button',{class:'p',onclick:async()=>{if(!confirm('Birleştirilsin mi?'))return;try{await api('/api/merge',{keep,others:cl.filter(c=>c.id!==keep).map(c=>c.id)});S.dups=await api('/api/duplicates');toast('Birleştirildi');await load()}catch(e){toast('Hata: '+e.message)}}},'Birleştir'),
+        h('button',{onclick:()=>{S.dups=S.dups.filter(x=>x!==cl);render()}},'Atla')));
+    draw();return box}))}
+function resizeImage(file){return new Promise((res,rej)=>{const img=new Image();img.onload=()=>{const s=Math.min(1,400/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=img.width*s;c.height=img.height*s;c.getContext('2d').drawImage(img,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.88))};img.onerror=rej;img.src=URL.createObjectURL(file)})}
+async function edit(id){
+  const d=id?await api('/api/contact?id='+encodeURIComponent(id)):{first:'',last:'',org:'',note:'',phones:[{type:'cell',value:''}],emails:[{type:'home',value:''}],hasPhoto:false};
+  let photo=null;const F={};const mk=(k,l,v)=>{F[k]=h('input',{value:v||''});return [h('label',{},l),F[k]]};
+  const av=h('div',{class:'av big'});const showAv=src=>{av.replaceChildren();if(src)av.append(h('img',{src}));else av.textContent=(d.fn||d.first||'?')[0]?.toUpperCase()||'?'};
+  showAv(d.hasPhoto&&id?'/api/photo?id='+id+'&t='+Date.now():null);
+  const fileIn=h('input',{type:'file',accept:'image/*',hidden:true,onchange:async e=>{if(e.target.files[0]){photo=await resizeImage(e.target.files[0]);showAv(photo)}}});
+  const multi=(items,types)=>{const w=h('div');const add=(it)=>{const r=h('div',{class:'ml'},h('select',{},...types.map(t=>h('option',{value:t[0],selected:t[0]===it.type},t[1]))),h('input',{value:it.value}),h('button',{onclick:()=>r.remove()},'×'));r.sel=r.children[0];r.inp=r.children[1];w.append(r)};items.forEach(add);w.add=add;return w};
+  const pT=[['cell','Cep'],['home','Ev'],['work','İş'],['iphone','iPhone'],['main','Ana'],['other','Diğer']],eT=[['home','Ev'],['work','İş'],['other','Diğer']];
+  const ph=multi(d.phones.length?d.phones:[{type:'cell',value:''}],pT),em=multi(d.emails.length?d.emails:[{type:'home',value:''}],eT);
+  for(const[w,l]of[[ph,pT],[em,eT]])w.types=l;
+  const note=h('textarea',{rows:3,value:d.note||''});
+  const close=()=>m.remove();
+  const collect=w=>[...w.children].map(r=>({type:r.sel.value,value:r.inp.value}));
+  const m=h('div',{class:'modal',onmousedown:e=>{if(e.target===m)close()}},h('div',{class:'box'},
+    h('div',{style:'display:flex;gap:14px;align-items:center'},av,h('div',{},h('button',{onclick:()=>fileIn.click()},'Fotoğraf seç'),' ',h('button',{onclick:()=>{photo='';showAv(null)}},'Kaldır'),fileIn)),
+    h('div',{class:'two'},h('div',{},...mk('first','Ad',d.first)),h('div',{},...mk('last','Soyad',d.last))),
+    ...mk('org','Şirket',d.org),
+    h('label',{},'Telefonlar'),ph,h('button',{onclick:()=>ph.add({type:'cell',value:''})},'+ telefon'),
+    h('label',{},'E-postalar'),em,h('button',{onclick:()=>em.add({type:'home',value:''})},'+ e-posta'),
+    h('label',{},'Not'),note,
+    h('div',{style:'display:flex;gap:8px;margin-top:16px;justify-content:flex-end'},
+      id?h('button',{class:'d',style:'margin-right:auto',onclick:async()=>{if(!confirm('Bu kayıt silinsin mi?'))return;await api('/api/delete',{ids:[id],confirm:true});close();toast('Silindi');load()}},'Sil'):null,
+      h('button',{onclick:close},'Vazgeç'),
+      h('button',{class:'p',onclick:async()=>{try{const body={id,first:F.first.value,last:F.last.value,org:F.org.value,phones:collect(ph),emails:collect(em),note:note.value};if(photo!==null)body.photo=photo;
+        await api('/api/save',body);close();toast('Kaydedildi (iCloud ile eşitleniyor)');load()}catch(e){toast('Hata: '+e.message)}}},'Kaydet'))));
+  document.body.append(m)}
+$('#search').oninput=render;$('#filter').onchange=render;$('#add').onclick=()=>edit(null);
+$('#reload').onclick=async()=>{try{await api('/api/reload',{});await load();toast('Yenilendi')}catch(e){toast('Hata: '+e.message)}};
+load().catch(e=>toast('Yükleme hatası: '+e.message));
+</script></body></html>
